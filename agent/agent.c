@@ -24,8 +24,8 @@ static const char AGENT_SYSTEM_TEMPLATE[] =
     "Return a short, final text reply when the task is done.";
 
 struct Agent {
-  char *system_prompt;
-  char *last_reply;
+  char *system_prompt;//系统提示词
+  char *last_reply;//缓存上一次LLM回复的文本内容（如果有的话），以便在下一次agent_chat调用时返回给用户。这个字段的生命周期与Agent实例相同，每次agent_chat调用都会更新它的内容。
 };
 
 Agent *agent_create(void) {
@@ -47,6 +47,73 @@ void agent_free(Agent *a) {
 const char *agent_chat(Agent *a, const char *user_input) {
   (void)a;
   (void)user_input;
+  
+  // 创建消息列表
+  MessageList msgs;
+  msg_list_init(&msgs);
+
+  // 将用户输入添加到消息列表（JSON字符串形式）
+  char *user_msg = msg_user_json(user_input);
+  if (!user_msg) {
+    fprintf(stderr, "Failed to create user message JSON\n");
+    msg_list_free(&msgs);
+    return NULL;
+  }
+  msg_list_push(&msgs, user_msg);// msg_list_push 会接管 user_msg 的所有权，因此不需要在这里 free(user_msg)
+
+  // 调用 llm_chat 获取 LLM 回复
+  LLMResponse response;
+  char err_buf[512];
+
+  // 调用 llm_chat 函数，传入消息列表、系统提示词、模型 ID，以及用于存储回复的结构体和错误信息的缓冲区
+  int ret = llm_chat(&msgs, a->system_prompt, g_config.model, &response, err_buf, sizeof(err_buf));
+  if (ret < 0) {
+    fprintf(stderr, "LLM chat failed: %s\n", err_buf);
+    msg_list_free(&msgs);
+    return NULL;
+  }
+
+  // 判断 LLM 回复中是否包含工具调用
+  if (response.n_tool_calls == 0) {
+    // 没有工具调用，直接缓存回复内容并返回
+    // 缓存 content 字段的内容到 Agent 的 last_reply 中，以便下一次调用时返回给用户
+    if (a->last_reply) {
+      free(a->last_reply);
+    }
+    a->last_reply = response.content ? xstrdup(response.content) : NULL;
+    // 释放其他资源
+    if (response.raw_message) {
+      free(response.raw_message);
+    }
+    if (response.tool_calls) {
+      free(response.tool_calls);
+    }
+    msg_list_free(&msgs);
+    return a->last_reply;
+  }
+
+  // 有工具调用，执行工具并获取结果(phase A只需要支持一个工具调用)
+  if (response.n_tool_calls > 0) {
+    // 将assistant的回复(raw_message)添加到消息列表中，以便工具调用时上下文完整
+    char *assistant_msg = xstrdup(response.raw_message);
+    msg_list_push(&msgs, assistant_msg); 
+
+    // 处理第一个工具调用
+    LLMToolCall *tool_call = &response.tool_calls[0];
+
+    ToolResult tool_result;
+
+    if (strcmp(tool_call->name, "bash") == 0) {
+      // 执行bash工具
+      tool_result = bash_tool_execute(tool_call->args);
+    } else {
+      // 不支持的工具
+      tool_result.ok = false;
+      tool_result.output = xasprintf("Unsupported tool: %s. Available tools: bash", tool_call->name);
+    }
+    }
+
+  }
 
   /*
    * TODO(student, Part 1A):

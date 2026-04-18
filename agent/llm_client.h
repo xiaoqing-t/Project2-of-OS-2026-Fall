@@ -27,6 +27,7 @@ typedef struct {
   char *raw_message; /* serialized assistant message — push verbatim into
                         history */
   int n_tool_calls;
+  LLMToolCall *tool_calls;
   /* TODO(student): add storage for the LLMToolCall entries here. */
 } LLMResponse;
 
