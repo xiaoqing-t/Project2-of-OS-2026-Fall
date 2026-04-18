@@ -72,6 +72,15 @@ const char *agent_chat(Agent *a, const char *user_input) {
     msg_list_free(&msgs);
     return NULL;
   }
+  // response 是llm_client.c中的out，LLMResponse
+  //typedef struct {
+//   char *content;     /* assistant text, if any (may be NULL or empty) */
+//   char *raw_message; /* serialized assistant message — push verbatim into
+//                         history */
+//   int n_tool_calls;
+//   LLMToolCall *tool_calls;
+// } LLMResponse;
+
 
   // 判断 LLM 回复中是否包含工具调用
   if (response.n_tool_calls == 0) {
@@ -105,16 +114,91 @@ const char *agent_chat(Agent *a, const char *user_input) {
 
     if (strcmp(tool_call->name, "bash") == 0) {
       // 执行bash工具
-      tool_result = bash_tool_execute(tool_call->args);
+      tool_result = bash_tool_exec(tool_call->args);
     } else {
       // 不支持的工具
       tool_result.ok = false;
       tool_result.output = xasprintf("Unsupported tool: %s. Available tools: bash", tool_call->name);
     }
+
+    // 将工具调用结果添加到消息列表中，作为工具消息
+    // tool_call->id 用于将结果与工具调用配对
+    char *tool_msg = msg_tool_json(tool_call->id, tool_result.output);
+    if (!tool_msg) {
+      fprintf(stderr, "agent_chat: Failed to create tool message JSON\n");
+      free(tool_result.output);
+      msg_list_free(&msgs);
+      if (response.content) free(response.content);
+      if (response.raw_message) free(response.raw_message);
+      if (response.tool_calls) {
+        for (int j = 0; j < response.n_tool_calls; j++) {
+          if (response.tool_calls[j].id) free(response.tool_calls[j].id);
+          if (response.tool_calls[j].name) free(response.tool_calls[j].name);
+          if (response.tool_calls[j].args) cJSON_Delete(response.tool_calls[j].args);
+        }
+        free(response.tool_calls);
+      }
+      return NULL;
+    }
+    msg_list_push(&msgs, tool_msg); 
+
+    free(tool_result.output);
+  
+
+    // 第二次调用llm_chat，获取LLM对工具调用结果的回复
+    LLMResponse final_response;
+    char err_buf2[512];
+
+    int ret2 = llm_chat(&msgs, a->system_prompt, g_config.model, &final_response, err_buf2, sizeof(err_buf2));
+
+    if (ret2 < 0) {
+      fprintf(stderr, "agent_chat: LLM chat after tool execution failed: %s\n", err_buf2);
+      // 清理资源
+      if (response.content) free(response.content);
+      if (response.raw_message) free(response.raw_message);
+      if (response.tool_calls) {
+          for (int i = 0; i < response.n_tool_calls; i++) {
+              if (response.tool_calls[i].id) free(response.tool_calls[i].id);
+              if (response.tool_calls[i].name) free(response.tool_calls[i].name);
+              if (response.tool_calls[i].args) cJSON_Delete(response.tool_calls[i].args);
+          }
+          free(response.tool_calls);
+      }
+      msg_list_free(&msgs);
+      return NULL;
+    }
+    
+    // 保存最终回复到 agent
+    if (a->last_reply) {
+      free(a->last_reply);
+    }
+    a->last_reply = final_response.content ? final_response.content : NULL;
+
+    // 释放其他资源
+    if (final_response.raw_message) free(final_response.raw_message);
+    if (final_response.tool_calls) {
+      for (int i = 0; i < final_response.n_tool_calls; i++) {
+        if (final_response.tool_calls[i].id) free(final_response.tool_calls[i].id);
+        if (final_response.tool_calls[i].name) free(final_response.tool_calls[i].name);
+        if (final_response.tool_calls[i].args) cJSON_Delete(final_response.tool_calls[i].args);
+      }
+      free(final_response.tool_calls);
     }
 
+    // 清理第一次调用的资源
+    if (response.content) free(response.content);
+    if (response.raw_message) free(response.raw_message);
+    if (response.tool_calls) {
+      for (int i = 0; i < response.n_tool_calls; i++) {
+        if (response.tool_calls[i].id) free(response.tool_calls[i].id);
+        if (response.tool_calls[i].name) free(response.tool_calls[i].name);
+        if (response.tool_calls[i].args) cJSON_Delete(response.tool_calls[i].args);
+      }
+      free(response.tool_calls);
+    }
+    msg_list_free(&msgs);
+    return a->last_reply;
   }
-
   /*
    * TODO(student, Part 1A):
    *
@@ -130,6 +214,5 @@ const char *agent_chat(Agent *a, const char *user_input) {
    *      the tool the LLM asked for, push the result back as a tool
    *      message (msg_tool_json in message.h), and call llm_chat again.
    */
-  fprintf(stderr, "agent_chat: not implemented\n");
-  return NULL;
+   return NULL;
 }

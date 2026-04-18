@@ -115,7 +115,6 @@ ToolResult bash_tool_exec(cJSON *args) {
 
     //等待子进程结束，并获取其退出状态。
     int status;
-    waitpid(pid, &status, 0);
     if (waitpid(pid, &status, 0) < 0) {
       free(output);
       return (ToolResult){.ok = false,
