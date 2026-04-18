@@ -129,7 +129,7 @@ ToolResult bash_tool_exec(cJSON *args) {
       int exit_code = WEXITSTATUS(status);
       if (exit_code == 0) {
         success = true;
-        final_output = output ? output : xstrdup("no output");
+        final_output = output ? xstrdup(output) : xstrdup("no output");
       } else {
         success = false;
         final_output = xasprintf("%s\n[exit code: %d]", output ? output : "", exit_code);
