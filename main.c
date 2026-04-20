@@ -26,7 +26,7 @@ int main(void) {
 
   char input[INPUT_BUF];
   int rc = 0;
-  
+
   // REPL 循环
   while (1) {
     ui_prompt();

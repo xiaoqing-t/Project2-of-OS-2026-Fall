@@ -165,6 +165,7 @@ int llm_chat(const MessageList *messages, const char *system_prompt,
       "Authorization: Bearer %s\r\n"
       "Content-Type: application/json\r\n"
       "Content-Length: %zu\r\n"
+      "Connection: close\r\n"
       "\r\n",
       g_config.llm_host, g_config.llm_port, g_config.api_key, body_len
     );// %zu 用于无符号整数，表示body的长度。header_len 是实际写入header缓冲区的字节数，不包括终止的NUL字符。
@@ -192,6 +193,11 @@ int llm_chat(const MessageList *messages, const char *system_prompt,
       cJSON_Delete(root);
       return -1;
     }
+    
+    // ----------------------debug-----------------------
+    printf("=== HTTP HEADER ===\n%s", header);
+    printf("=== HTTP BODY ===\n%s\n", body);
+    // ----------------------debug-----------------------
 
     // 发送HTTP请求体
     if (send_all(fd, body, body_len) < 0) {
@@ -207,8 +213,8 @@ int llm_chat(const MessageList *messages, const char *system_prompt,
     size_t response_len = 0;
 
     // 使用recv_all读取完整的HTTP响应，设置超时时间为LLM_TIMEOUT_SEC秒
-    if (recv_all(fd, 30, &response, &response_len, err, err_cap) < 0) {
-      snprintf(err, err_cap, "Failed to receive HTTP response: %s", strerror(errno));
+    if (recv_all(fd, LLM_TIMEOUT_SEC, &response, &response_len, err, err_cap) < 0) {
+      // snprintf(err, err_cap, "Failed to receive HTTP response: %s", strerror(errno));
       close(fd);
       free(body);
       cJSON_Delete(root);
