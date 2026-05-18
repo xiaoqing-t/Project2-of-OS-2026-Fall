@@ -195,8 +195,8 @@ int llm_chat(const MessageList *messages, const char *system_prompt,
     }
     
     // ----------------------debug-----------------------
-    printf("=== HTTP HEADER ===\n%s", header);
-    printf("=== HTTP BODY ===\n%s\n", body);
+    // printf("=== HTTP HEADER ===\n%s", header);
+    // printf("=== HTTP BODY ===\n%s\n", body);
     // ----------------------debug-----------------------
 
     // 发送HTTP请求体
