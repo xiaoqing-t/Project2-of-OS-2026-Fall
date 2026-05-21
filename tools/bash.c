@@ -20,25 +20,21 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-const char *BASH_TOOL_NAME = "bash";
-const char *BASH_TOOL_DESC =
-    "Run a shell command and return its combined stdout/stderr.";
-const char *BASH_TOOL_SCHEMA =
-    "{\"type\":\"object\","
-    "\"properties\":{\"command\":{\"type\":\"string\","
-    "\"description\":\"The shell command to execute\"}},"
-    "\"required\":[\"command\"]}";
+ToolResult tool_bash(cJSON *args);
 
-void tool_result_free(ToolResult *r) {
-  if (!r)
-    return;
-  free(r->output);
-  r->output = NULL;
-} //ToolResult 是一个结构体，包含一个布尔值ok和一个字符串指针output。
-// 这个函数的作用是释放ToolResult结构体中的output字符串所占用的内存，并将output指针设置为NULL，以避免悬空指针的使用。
+ToolDef bash_def = {
+    .name = "bash",
+    .desc = "Run a shell command and return its combined stdout/stderr.",
+    .param_schema = "{\"type\":\"object\","
+                    "\"properties\":{\"command\":{\"type\":\"string\","
+                    "\"description\":\"The shell command to execute\"}},"
+                    "\"required\":[\"command\"]}",
+    .exec = tool_bash,
+    .read_only = false,
+};
 
 //cJSON是C语言JSON解析库，cJSON_GetObjectItem函数用于从JSON对象中获取指定键的值——返回一个cJSON指针，cJSON_GetStringValue函数用于获取JSON字符串的值，返回一个指向字符串的指针。
-ToolResult bash_tool_exec(cJSON *args) {
+ToolResult tool_bash(cJSON *args) {
   const char *cmd = cJSON_GetStringValue(cJSON_GetObjectItem(args, "command"));
   if (!cmd)
     return (ToolResult){.ok = false,

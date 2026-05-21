@@ -30,6 +30,9 @@
  * plus four lines added here is the full diff for a new tool.
  */
 extern ToolDef bash_def;
+extern ToolDef read_file_def;
+extern ToolDef write_file_def;
+extern ToolDef edit_file_def;
 /* TODO(student, Phase A.3): declare your read/write/edit ToolDefs here. */
 
 static ToolDef *g_tools[MAX_REGISTERED_TOOLS];
@@ -40,6 +43,9 @@ void tools_init(void) {
         return;
 
     tool_register(&bash_def);
+    tool_register(&read_file_def);
+    tool_register(&write_file_def);
+    tool_register(&edit_file_def);
     /* TODO(student, Phase A.3): register read_file_def, write_file_def,
        edit_file_def here, in this exact order so that test output is
        deterministic. */

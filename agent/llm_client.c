@@ -93,49 +93,76 @@ int llm_chat(const MessageList *messages, const char *system_prompt,
       cJSON_AddItemToArray(messages_array, msg);//msg所有权也给了messages_array，不需要单独释放。
     }
     
-    // 添加工具描述
+    // part2修改
     cJSON *tools_array = cJSON_CreateArray();
-    if (!tools_array) {
-      snprintf(err, err_cap, "Failed to create tools array");
-      cJSON_Delete(root);
-      return -1;
-    }
-    cJSON_AddItemToObject(root, "tools", tools_array);// tools_array 被添加
+    cJSON_AddItemToObject(root, "tools", tools_array);// tools_array 被添加到root对象，并且root对象现在拥有一个名为"tools"的字段，指向这个数组。不需要单独释放。
 
-    // 创建一个工具对象，描述bash工具
-    cJSON *tool_obj = cJSON_CreateObject();
-    if (!tool_obj) {
-      snprintf(err, err_cap, "Failed to create tool object");
-      cJSON_Delete(root);
-      return -1;
-    }
-    cJSON_AddItemToArray(tools_array, tool_obj);// tool_obj 被添加到tools_array数组中，并且tools_array现在拥有一个新的元素，指向这个对象。不需要单独释放。
+    int tool_count = 0;
+    ToolDef *const *tools = tool_list(&tool_count);
+    for (int i = 0; i < tool_count; i++) {
+      cJSON *tool_obj = cJSON_CreateObject();
+      cJSON_AddStringToObject(tool_obj, "type", "function");
 
-    // 添加type字段
-    cJSON_AddStringToObject(tool_obj, "type", "function");// type字段被添加到tool_obj对象中，并且值为"function"。不需要单独释放。
+      cJSON *function_obj = cJSON_CreateObject();
+      cJSON_AddStringToObject(function_obj, "name", tools[i]->name);
+      cJSON_AddStringToObject(function_obj, "description", tools[i]->desc);
 
-    // 添加function字段
-    cJSON *function_obj = cJSON_CreateObject();
-    if (!function_obj) {
-      snprintf(err, err_cap, "Failed to create function object");
-      cJSON_Delete(root);
-      return -1;
+      // 解析 param_schema 字段 （它是一个 JSON 字符串）
+      cJSON *params = cJSON_Parse(tools[i]->param_schema);
+      if (!params) {
+        // 如果解析失败，直接delete
+        cJSON_Delete(tool_obj);
+        continue;
+      }
+      cJSON_AddItemToObject(function_obj, "parameters", params); // function_obj 现在拥有了params对象，不需要单独释放。
+      cJSON_AddItemToObject(tool_obj, "function", function_obj); // tool_obj 现在拥有了function_obj对象，不需要单独释放。
+      cJSON_AddItemToArray(tools_array, tool_obj); // tool_obj 被添加到tools_array数组中，并且tools_array现在拥有一个新的元素，指向这个对象。不需要单独释放。
     }
-    cJSON_AddItemToObject(tool_obj, "function", function_obj);
+
+
+    // // 添加工具描述
+    // cJSON *tools_array = cJSON_CreateArray();
+    // if (!tools_array) {
+    //   snprintf(err, err_cap, "Failed to create tools array");
+    //   cJSON_Delete(root);
+    //   return -1;
+    // }
+    // cJSON_AddItemToObject(root, "tools", tools_array);// tools_array 被添加
+
+    // // 创建一个工具对象，描述bash工具
+    // cJSON *tool_obj = cJSON_CreateObject();
+    // if (!tool_obj) {
+    //   snprintf(err, err_cap, "Failed to create tool object");
+    //   cJSON_Delete(root);
+    //   return -1;
+    // }
+    // cJSON_AddItemToArray(tools_array, tool_obj);// tool_obj 被添加到tools_array数组中，并且tools_array现在拥有一个新的元素，指向这个对象。不需要单独释放。
+
+    // // 添加type字段
+    // cJSON_AddStringToObject(tool_obj, "type", "function");// type字段被添加到tool_obj对象中，并且值为"function"。不需要单独释放。
+
+    // // 添加function字段
+    // cJSON *function_obj = cJSON_CreateObject();
+    // if (!function_obj) {
+    //   snprintf(err, err_cap, "Failed to create function object");
+    //   cJSON_Delete(root);
+    //   return -1;
+    // }
+    // cJSON_AddItemToObject(tool_obj, "function", function_obj);
     
-    // 添加function.name字段
-    cJSON_AddStringToObject(function_obj, "name", BASH_TOOL_NAME);
-    // 添加function.description字段
-    cJSON_AddStringToObject(function_obj, "description", BASH_TOOL_DESC);
-    // 添加function.parameters字段
-    // JSON scheme是raw string，先添加为string，再解析回object
-    cJSON *params = cJSON_Parse(BASH_TOOL_SCHEMA);
-    if (!params) {
-      snprintf(err, err_cap, "Failed to parse BASH_TOOL_SCHEMA");
-      cJSON_Delete(root);
-      return -1;
-    }
-    cJSON_AddItemToObject(function_obj, "parameters", params);
+    // // 添加function.name字段
+    // cJSON_AddStringToObject(function_obj, "name", BASH_TOOL_NAME);
+    // // 添加function.description字段
+    // cJSON_AddStringToObject(function_obj, "description", BASH_TOOL_DESC);
+    // // 添加function.parameters字段
+    // // JSON scheme是raw string，先添加为string，再解析回object
+    // cJSON *params = cJSON_Parse(BASH_TOOL_SCHEMA);
+    // if (!params) {
+    //   snprintf(err, err_cap, "Failed to parse BASH_TOOL_SCHEMA");
+    //   cJSON_Delete(root);
+    //   return -1;
+    // }
+    // cJSON_AddItemToObject(function_obj, "parameters", params);
 
     // 将JSON对象转换为字符串
     char *body = cJSON_PrintUnformatted(root);

@@ -1,6 +1,7 @@
 #include "agent/agent.h"
 #include "config.h"
 #include "ui/ui.h"
+#include "tools/tools.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,6 +11,7 @@
 
 int main(void) {
   config_init();
+  tools_init();
 
   //初始化UI
   ui_init();

@@ -13,12 +13,14 @@
 #include "message.h"
 #include "tools/tools.h"
 #include "util.h"
+#include "tools/executor.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <alloca.h>
 
+#define MAX_TOOL_CALLS 32
 #define MAX_TURNS 20 //防止无限循环
 
 static const char AGENT_SYSTEM_TEMPLATE[] =
@@ -115,38 +117,70 @@ const char *agent_chat(Agent *a, const char *user_input) {
     }
     ui_begin_tools(n_tools, views); 
 
-    // 3.如果有 tool_calls，执行所有工具，并将结果加入历史
-    // 添加assistant消息
+    // part2 修改
+
+    // 添加assistant消息到历史
     char *assistant_msg = xstrdup(response.raw_message);
+    if (!assistant_msg) {
+      fprintf(stderr, "Failed to duplicate assistant message\n");
+      llm_response_cleanup(&response);
+      return NULL;
+    }
     msg_list_push(&a->history, assistant_msg);
 
-    // 遍历执行每个tool_call
-    for (int i=0; i < response.n_tool_calls; i++) {
-      LLMToolCall *tool_call = &response.tool_calls[i];
-      ToolResult tool_result;
+    // 有tool_calls, 用executor统一执行，并将结果加入历史
+    char *out_msgs[MAX_TOOL_CALLS];
+    char executor_err[512];
 
-      if (strcmp(tool_call->name, "bash") == 0) {
-        tool_result = bash_tool_exec(tool_call->args);
-      } else {
-        tool_result.ok = false;
-        tool_result.output = xasprintf("Unknown tool: %s. Available :bash", tool_call->name);
-      }
+    int exec_ret = executor_run_tools(response.tool_calls, 
+                                      response.n_tool_calls,
+                                      out_msgs, 
+                                      executor_err, 
+                                      sizeof(executor_err));
 
-      // 将工具记录加入历史
-      char *tool_msg = msg_tool_json(tool_call->id, tool_result.output);
-      if (!tool_msg) {
-        fprintf(stderr, "Failed to create tool message\n");
-        free(tool_result.output);
-        //清理资源之后返回NULL
-        return NULL;
-      }
-      msg_list_push(&a->history, tool_msg);
-
-      // 更新UI
-      ui_tool_done(i, tool_result.ok, tool_result.output ? tool_result.output : "(no output)");
-
-      free(tool_result.output);
+    if (exec_ret < 0) {
+      fprintf(stderr, "Tool execution failed: %s\n", executor_err);
+      llm_response_cleanup(&response);
+      return NULL;
     }
+
+    // 将工具调用结果加入历史
+    for (int i = 0; i < response.n_tool_calls; i++) {
+      msg_list_push(&a->history, out_msgs[i]); 
+    }
+
+    // 3.如果有 tool_calls，执行所有工具，并将结果加入历史
+    // 添加assistant消息
+    // char *assistant_msg = xstrdup(response.raw_message);
+    // msg_list_push(&a->history, assistant_msg);
+
+    // // 遍历执行每个tool_call
+    // for (int i=0; i < response.n_tool_calls; i++) {
+    //   LLMToolCall *tool_call = &response.tool_calls[i];
+    //   ToolResult tool_result;
+
+    //   if (strcmp(tool_call->name, "bash") == 0) {
+    //     tool_result = bash_tool_exec(tool_call->args);
+    //   } else {
+    //     tool_result.ok = false;
+    //     tool_result.output = xasprintf("Unknown tool: %s. Available :bash", tool_call->name);
+    //   }
+
+    //   // 将工具记录加入历史
+    //   char *tool_msg = msg_tool_json(tool_call->id, tool_result.output);
+    //   if (!tool_msg) {
+    //     fprintf(stderr, "Failed to create tool message\n");
+    //     free(tool_result.output);
+    //     //清理资源之后返回NULL
+    //     return NULL;
+    //   }
+    //   msg_list_push(&a->history, tool_msg);
+
+    //   // 更新UI
+    //   ui_tool_done(i, tool_result.ok, tool_result.output ? tool_result.output : "(no output)");
+
+    //   free(tool_result.output);
+    // }
 
     // turns++，继续循环
     llm_response_cleanup(&response);
