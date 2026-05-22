@@ -31,10 +31,14 @@
 #include "tools/tools.h"
 #include "ui/ui.h"
 #include "util.h"
+#include "thread_pool.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+// 全局线程池
+static thread_pool *g_executor_pool = NULL;
 
 typedef struct {
     LLMToolCall *call;
@@ -42,6 +46,13 @@ typedef struct {
     ToolResult result;
     int index;
 } ToolTask;
+
+static void run_one(ToolTask *task);
+
+static void run_one_wrapper(void *arg) {
+    ToolTask *task = (ToolTask *)arg;
+    run_one(task);
+}
 
 static void run_one(ToolTask *task) {
     if (task->def) {
@@ -60,6 +71,15 @@ int executor_run_tools(
 ) {
     if (count <= 0)
         return 0;
+
+    // 初始化线程池
+    if (g_executor_pool == NULL) {
+        g_executor_pool = thread_pool_create(4);
+        if (g_executor_pool == NULL) {
+            snprintf(err, err_cap, "failed to create thread pool");
+            return -1;
+        }
+    }
 
     ToolTask *tasks = xmalloc((size_t)count * sizeof(*tasks));
     ToolCallView *views = xmalloc((size_t)count * sizeof(*views));
@@ -101,8 +121,49 @@ int executor_run_tools(
      * The handout has the full sketch. Your tests under `make test-tsan`
      * decide whether you got the sync right.
      */
-    for (int i = 0; i < count; i++)
-        run_one(&tasks[i]);
+
+    // Phase B 新加并行判定
+    // 如果有修改工具，那么直接串行，这样更加安全；如果都是只读工具，并且数量大于等于 2，那么就并行。
+    bool can_parallel = count >= 2;
+    if (can_parallel) {
+        for (int i = 0; i < count; i++) {
+            if (tasks[i].def == NULL || !tasks[i].def->read_only) {
+                can_parallel = false;
+                break;
+            }
+        }
+    }
+
+    if (can_parallel) {
+        // 提交任务到线程池
+        for (int i = 0; i < count; i++) {
+            int ret = thread_pool_submit(g_executor_pool, run_one_wrapper, &tasks[i]);
+            if (ret != 0) {
+                snprintf(err, err_cap, "failed to submit task %d to thread pool", i);
+                // 等待已提交的任务完成
+                thread_pool_wait(g_executor_pool);
+                // 清理资源
+                for (int j = 0; j < count; j++) {
+                    tool_result_free(&tasks[j].result);
+                }
+                for (int j = 0; j < count; j++) {
+                    free(args_json[j]);
+                }
+                free(args_json);
+                free(views);
+                free(tasks);
+                return -1;
+            }
+        }
+
+        // 等待所有任务完成
+        thread_pool_wait(g_executor_pool);
+    } else {
+        // 串行执行
+    
+        for (int i = 0; i < count; i++)
+            run_one(&tasks[i]);
+    }
 
     ui_idle();
 
