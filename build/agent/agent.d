@@ -1,6 +1,6 @@
 build/agent/agent.o: agent/agent.c agent/agent.h ui/ui.h config.h \
  agent/llm_client.h libs/cJSON.h message.h tools/tools.h util.h \
- tools/executor.h agent/llm_client.h
+ tools/executor.h agent/llm_client.h context/context.h
 agent/agent.h:
 ui/ui.h:
 config.h:
@@ -11,3 +11,4 @@ tools/tools.h:
 util.h:
 tools/executor.h:
 agent/llm_client.h:
+context/context.h:

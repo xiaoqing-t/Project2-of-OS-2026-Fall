@@ -14,6 +14,7 @@
 #include "tools/tools.h"
 #include "util.h"
 #include "tools/executor.h"
+#include "context/context.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,7 +30,8 @@ static const char AGENT_SYSTEM_TEMPLATE[] =
     "Return a short, final text reply when the task is done.";
 
 struct Agent {
-  MessageList history;//消息历史，包含用户输入、LLM回复、工具调用记录等。每条消息都是一个JSON字符串，格式由message.h定义。这个列表会随着agent_chat的调用而增长，记录整个对话过程。
+  // MessageList history;//消息历史，包含用户输入、LLM回复、工具调用记录等。每条消息都是一个JSON字符串，格式由message.h定义。这个列表会随着agent_chat的调用而增长，记录整个对话过程。
+  Context *ctx;
   char *system_prompt;//系统提示词
   char *last_reply;//缓存上一次LLM回复的文本内容（如果有的话），以便在下一次agent_chat调用时返回给用户。这个字段的生命周期与Agent实例相同，每次agent_chat调用都会更新它的内容。
 };
@@ -57,7 +59,29 @@ Agent *agent_create(void) {
   if (!a)
     return NULL;
   a->system_prompt = xasprintf(AGENT_SYSTEM_TEMPLATE, g_config.workdir);
-  msg_list_init(&a->history);
+
+  // part3修改
+  // 读取环境变量配置 context window (默认 8192)
+  int context_window = 8192;
+  const char *env = getenv("CONTEXT_WINDOW");
+  if (env) {
+    int val = atoi(env);
+    if (val > 0) context_window = val;
+  }
+
+  a->ctx = ctx_create(context_window);
+  if (!a->ctx) {
+    free(a->system_prompt);
+    free(a);
+    return NULL;
+  }
+  
+  // 注册 policies
+  extern ContextPolicy offload_policy;
+  extern ContextPolicy summary_policy;
+  ctx_add_policy(a->ctx, &offload_policy);
+  ctx_add_policy(a->ctx, &summary_policy);
+
   return a;
 }
 
@@ -66,7 +90,7 @@ void agent_free(Agent *a) {
     return;
   free(a->system_prompt);
   free(a->last_reply);
-  msg_list_free(&a->history);
+  ctx_free(a->ctx);
   free(a);
 }
 
@@ -80,7 +104,9 @@ const char *agent_chat(Agent *a, const char *user_input) {
     fprintf(stderr, "Failed to create user message JSON\n");
     return NULL;
   }
-  msg_list_push(&a->history, user_msg);// msg_list_push 会接管 user_msg 的所有权，因此不需要在这里 free(user_msg)
+  //part3
+  ctx_push(a->ctx, user_msg);
+  // msg_list_push(&a->history, user_msg);// msg_list_push 会接管 user_msg 的所有权，因此不需要在这里 free(user_msg)
 
   // 调用 llm_chat 获取 LLM 回复
   LLMResponse response;
@@ -88,9 +114,17 @@ const char *agent_chat(Agent *a, const char *user_input) {
   int turns = 0;
 
   while (turns < MAX_TURNS) {
+    // part3
+    // 在调用llm 之前先回收一次context
+    if (ctx_reclaim(a->ctx, err_buf, sizeof(err_buf)) != 0) {
+      fprintf(stderr, "Context reclaim failed: %s\n", err_buf);
+      return NULL;
+    }
+
     ui_begin_thinking();
     // 1.调用 llm_chat
-    int ret = llm_chat(&a->history, a->system_prompt, g_config.model,
+    // part3，用ctx_history获取消息列表
+    int ret = llm_chat(ctx_history(a->ctx), a->system_prompt, g_config.model,
                        &response, err_buf, sizeof(err_buf));
     if (ret < 0) {
     fprintf(stderr, "LLM chat failed: %s\n", err_buf);
@@ -126,7 +160,7 @@ const char *agent_chat(Agent *a, const char *user_input) {
       llm_response_cleanup(&response);
       return NULL;
     }
-    msg_list_push(&a->history, assistant_msg);
+    ctx_push(a->ctx, assistant_msg);
 
     // 有tool_calls, 用executor统一执行，并将结果加入历史
     char *out_msgs[MAX_TOOL_CALLS];
@@ -146,7 +180,7 @@ const char *agent_chat(Agent *a, const char *user_input) {
 
     // 将工具调用结果加入历史
     for (int i = 0; i < response.n_tool_calls; i++) {
-      msg_list_push(&a->history, out_msgs[i]); 
+      ctx_push(a->ctx, out_msgs[i]); 
     }
 
     // 3.如果有 tool_calls，执行所有工具，并将结果加入历史
